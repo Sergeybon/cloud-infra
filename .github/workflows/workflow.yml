@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main ]
+
+  workflow_dispatch:
+
+env: 
+  GITHUB_REF_MAIN_BRANCH: 'refs/heads/main'
+
+jobs: 
+  create_hosted_zone:
+    runs-on: self-hosted
+    env:
+      TF_VAR_site_domain: ${{ secrets.DOMAIN_NAME }}
+    defaults: 
+      run: 
+        working-directory: terraform/hosted_zone
+    outputs:
+      certificate_arn: ${{ steps.certificate_arn.outputs.certificate_arn }} 
+      frontend_url: ${{ steps.frontend_url.outputs.frontend_url }}
+      backend_url: ${{ steps.backend_url.outputs.backend_url }}
+    steps:
+
+      - name: Checkout hosted_zone
+        uses: actions/checkout@v2
+        
+      - name: Terraform initialization
+        run: terraform init 
+        
+      - name: Run terraform
+        run: terraform apply -auto-approve 
+        
+      - name: Output certificate arn
+        id: certificate_arn
+        run: echo "::set-output name=certificate_arn::$(terraform output -raw certificate_arn)"
+        
+      - name: Output Frontend repositry url 
+        id: frontend_url
+        run: echo "::set-output name=frontend_url::$(terraform output -raw ecr_frontend)"
+        
+      - name: Output Backend repository url
+        id: backend_url
+        run: echo "::set-output name=backend_url::$(terraform output -raw ecr_backend)" 
+
+  build_frontend_image:
+    runs-on: self-hosted
+    needs: [create_hosted_zone]
+    steps:
+      - name: Checkout frontend_repository
+        uses: actions/checkout@v2
+        with:
+          repository: Authorita-h/frontend_intern_Maksim
+          token: ${{ secrets.GIT_TOKEN }} 
+      
+      - name: Build docker image
+        run: docker build -t ${{ needs.create_hosted_zone.outputs.frontend_url }}:${GITHUB_REF##*/}-latest .
+        if: ${{ github.ref != env.GITHUB_REF_MAIN_BRANCH }}
+
+      - name: Build docker image
+        run: docker build -t ${{ needs.create_hosted_zone.outputs.frontend_url }}:prod-latest .
+        if: ${{ github.ref == env.GITHUB_REF_MAIN_BRANCH }}
+      
+  build_backend_image:
+    runs-on: self-hosted
+    needs: [create_hosted_zone]
+    steps:
+      - name: Checkout frontend_repository
+        uses: actions/checkout@v2
+        with:
+          repository: Authorita-h/backend_intern_Maksim
+          token: ${{ secrets.GIT_TOKEN }} 
+      
+      - name: Build docker image
+        run: docker build -t ${{ needs.create_hosted_zone.outputs.backend_url }}:${GITHUB_REF##*/}-latest .
+        if: ${{ github.ref != env.GITHUB_REF_MAIN_BRANCH }}
+      
+      - name: Build docker image
+        run: docker build -t ${{ needs.create_hosted_zone.outputs.backend_url }}:prod-latest .
+        if: ${{ github.ref == env.GITHUB_REF_MAIN_BRANCH }}
+     
+  push_images:
+    runs-on: self-hosted
+    needs: [create_hosted_zone, build_frontend_image, build_backend_image]
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+        
+      - name: Push images
+        run: |
+          docker push ${{ needs.create_hosted_zone.outputs.frontend_url }}:${GITHUB_REF##*/}-latest
+          docker push ${{ needs.create_hosted_zone.outputs.backend_url }}:${GITHUB_REF##*/}-latest
+        if: ${{ github.ref != env.GITHUB_REF_MAIN_BRANCH }}
+      
+      - name: Push images
+        run: |
+          docker push ${{ needs.create_hosted_zone.outputs.backend_url }}:prod-latest
+          docker push ${{ needs.create_hosted_zone.outputs.frontend_url }}:prod-latest
+        if: ${{ github.ref == env.GITHUB_REF_MAIN_BRANCH }}
+   
+  create_infrastructure:
+    runs-on: self-hosted
+    env:
+      TF_VAR_DB_NAME: ${{ secrets.TF_VAR_DB_NAME }}
+      TF_VAR_DB_PASSWORD: ${{ secrets.TF_VAR_DB_PASSWORD }} 
+      TF_VAR_DB_USERNAME: ${{ secrets.TF_VAR_DB_USERNAME }} 
+      TF_VAR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      TF_VAR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      TF_VAR_site_domain: ${{ secrets.DOMAIN_NAME }}
+      TF_VAR_backend_repository_url: ${{ needs.create_hosted_zone.outputs.backend_url }}
+      TF_VAR_frontend_repository_url: ${{ needs.create_hosted_zone.outputs.frontend_url }}
+      TF_VAR_cert_arn: ${{ needs.create_hosted_zone.outputs.certificate_arn }}
+    needs: [create_hosted_zone, build_frontend_image, build_backend_image, push_images]
+    defaults: 
+      run: 
+        working-directory: terraform
+    steps:
+      - name: Checkout frontend_repository
+        uses: actions/checkout@v2
+        
+      - name: Terraform initialization
+        run: terraform init 
+        
+      - name: Select workspace
+        if: ${{ github.ref != env.GITHUB_REF_MAIN_BRANCH }}
+        run: terraform workspace select ${GITHUB_REF##*/} || terraform workspace new ${GITHUB_REF##*/}
+      
+      - name: Select workspace
+        if: ${{ github.ref == env.GITHUB_REF_MAIN_BRANCH }}
+        run: terraform workspace select prod || terraform workspace new prod
+          
+      - name: Run terraform
+        run: terraform apply -auto-approve
+   
