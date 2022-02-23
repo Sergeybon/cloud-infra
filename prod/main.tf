@@ -12,9 +12,9 @@ locals {
 data "terraform_remote_state" "glob" {
   backend = "s3"
   config = {
-    bucket = "alvee-aws-terraform-state-backend"
-    key    = "aws/us-east-1/global/glob/terraform.tfstate"
-    region = "us-east-1"
+    bucket = "sbf-aws-terraform-state-backend"
+    key    = "eu-central-1/glob/terraform.tfstate"
+    region = "eu-central-1"
   }
 }
 
@@ -22,15 +22,15 @@ data "terraform_remote_state" "glob" {
 module "ecs" {
   source = "../modules/terraform-aws-ecs"
 
-  name               = "asg-${local.environment}"
+  name               = "ecs-${local.environment}"
   container_insights = true
 
-#  capacity_providers = ["FARGATE", "FARGATE_SPOT", aws_ecs_capacity_provider.prov1.name]
-#
-#  default_capacity_provider_strategy = [{
-#    capacity_provider = aws_ecs_capacity_provider.prov1.name # "FARGATE_SPOT"
-#    weight            = "1"
-#  }]
+  capacity_providers = ["FARGATE", "FARGATE_SPOT", aws_ecs_capacity_provider.prov1.name]
+
+  default_capacity_provider_strategy = [{
+    capacity_provider = aws_ecs_capacity_provider.prov1.name # "FARGATE_SPOT"
+    weight            = "1"
+  }]
 
   tags = {
     Environment = local.environment
@@ -47,18 +47,18 @@ module "ec2_profile" {
   }
 }
 
-#resource "aws_ecs_capacity_provider" "prov1" {
-#  name = "prov1"
+resource "aws_ecs_capacity_provider" "prov1" {
+  name = "prov1"
 
-#  auto_scaling_group_provider {
-#    auto_scaling_group_arn = module.asg.autoscaling_group_arn
-#  }
-#
-#}
+  auto_scaling_group_provider {
+    auto_scaling_group_arn = module.asg.autoscaling_group_arn
+  }
+
+}
 
 #----- ECS  Services--------
-module "hello_world" {
-  source = "./service-hello-world"
+module "frontend" {
+  source = "./frontend"
 
   cluster_id = module.ecs.ecs_cluster_id
 }
@@ -104,9 +104,9 @@ module "asg" {
   # Auto scaling group
   vpc_zone_identifier       = data.terraform_remote_state.glob.outputs.private_subnets
   health_check_type         = "EC2"
-  min_size                  = 0
+  min_size                  = 1
   max_size                  = 2
-  desired_capacity          = 0 # we don't need them for the example
+  desired_capacity          = 1 # we don't need them for the example
   wait_for_capacity_timeout = 0
 
   tags = [
@@ -126,12 +126,12 @@ module "asg" {
 ###################
 # Disabled cluster
 ###################
-
-module "disabled_ecs" {
-  source = "../../"
-
-  create_ecs = false
-}
+#
+#module "disabled_ecs" {
+#  source = "../../"
+#
+#  create_ecs = false
+#}
 
 
 
@@ -139,20 +139,20 @@ module "disabled_ecs" {
 # ECR
 ######################
 
-resource "aws_ecr_repository" "frontend_repository" {
-  name = "frontend-repository-${local.environment}"
+resource "aws_ecr_repository" "frontend" {
+  name = "frontend"
 
   tags = {
-    "Name" = "Frontend repository"
+    "Name" = "Frontend"
     "Environment" = local.environment
   }
 }
 
-resource "aws_ecr_repository" "backend_repository" {
-  name = "backend-repository-${local.environment}"
+resource "aws_ecr_repository" "backend" {
+  name = "backend"
 
   tags = {
-    "Name" = "Bbackend repository"
+    "Name" = "Bbackend"
     "Environment" = local.environment
   }
 }

@@ -578,3 +578,14 @@ output "vpc_flow_log_cloudwatch_iam_role_arn" {
   description = "The ARN of the IAM role used when pushing logs to Cloudwatch log group"
   value       = module.vpc.vpc_flow_log_cloudwatch_iam_role_arn
 }
+
+#######################
+output "front_lb_target_group" {
+  description = "ARN of the front lb"
+  value       = aws_lb_target_group.front.arn
+}
+
+output "back_lb_target_group" {
+  description = "ARN of the back lb"
+  value       = aws_lb_target_group.back.arn
+}

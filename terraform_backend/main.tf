@@ -3,7 +3,7 @@ terraform {
 #  backend "s3" {
 #    bucket         = "alvee-aws-terraform-state-backend"
 #    key            = "terraform-backend/terraform.tfstate"
-#    region         = "us-east-1"
+#    region         = "eu-central-1"
 #    dynamodb_table = "alvee-aws-terraform-state-locks"
 #    encrypt        = true
 #  }
