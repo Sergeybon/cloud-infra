@@ -17,6 +17,16 @@ data "terraform_remote_state" "prod" {
   }
 }
 
+#
+#data "terraform_remote_state" "terraform-backend" {
+#  backend = "s3"
+#  config = {
+#    bucket = "sbf-aws-terraform-state-backend"
+#    key    = "terraform-backend.tfstate"
+#    region = "eu-central-1"
+#  }
+#}
+
 ################################################################################
 # VPC Module
 ################################################################################
@@ -25,14 +35,17 @@ module "vpc" {
   source                 = "terraform-aws-modules/vpc/aws"
   version                = "3.7.0"
   name = local.name
-  cidr                   = "10.10.0.0/16"
+  cidr                   = "20.10.0.0/16"
   azs                    = ["${local.region}a", "${local.region}b"]
-  public_subnets         = ["10.10.21.0/24", "10.10.22.0/24"]
-  private_subnets = ["10.10.23.0/24"]
+  private_subnets     = ["20.10.1.0/24", "20.10.2.0/24"]
+  public_subnets      = ["20.10.11.0/24", "20.10.12.0/24"]
   enable_nat_gateway     = true
   single_nat_gateway     = true
   one_nat_gateway_per_az = false
   tags = local.tags
+  enable_dns_hostnames = true
+  enable_dns_support = true
+
 
 }
 
@@ -306,3 +319,166 @@ resource "aws_security_group" "allow_elb" {
     Name = "allow_elb"
   }
 }
+
+
+resource "aws_security_group" "allow_ecs_sg" {
+  name        = "allow_ecs_sg"
+  description = "Allow SSH inbound traffic"
+  vpc_id      = module.vpc.vpc_id
+
+  ingress {
+    from_port = 80
+    protocol  = "HTTP"
+    to_port   = 80
+  }
+
+  egress {
+    from_port = 0
+    protocol  = "-1"
+    to_port   = 0
+  }
+
+  tags = {
+    Name = "allow_ecs"
+  }
+}
+
+#########################
+# bastion
+#########################
+
+#module "subnets" {
+#  source               = "cloudposse/dynamic-subnets/aws"
+#  version              = "0.39.3"
+#  availability_zones   = ["${local.region}a", "${local.region}b"]
+#  vpc_id               = module.vpc.vpc_id
+#  igw_id               = module.vpc.igw_id
+#  cidr_block           = "10.10.0.0/16"
+#  nat_gateway_enabled  = false
+#  nat_instance_enabled = false
+#
+#  context = module.this.context
+#}
+#
+#module "aws_key_pair" {
+#  source              = "cloudposse/key-pair/aws"
+#  version             = "0.18.0"
+#  attributes          = ["ssh", "key"]
+#  ssh_public_key_path = var.ssh_key_path
+#  generate_ssh_key    = var.generate_ssh_key
+#
+#  context = module.this.context
+#}
+#
+#module "ec2_bastion" {
+#  source = "..//modules/terraform-aws-ec2-bastion-server"
+#
+#  enabled = module.this.enabled
+#
+#  instance_type               = var.instance_type
+#  security_groups             = [aws_security_group.allow_web.id, aws_security_group.allow_ssh.id]
+#  subnets                     = module.vpc.public_subnets
+#  key_name                    = module.aws_key_pair.key_name
+#  user_data                   = var.user_data
+#  vpc_id                      = module.vpc.vpc_id
+#  associate_public_ip_address = var.associate_public_ip_address
+#
+#  context = module.this.context
+#}
+
+########################
+# route53
+########################
+#
+#resource "aws_route53_record" "a_record" {
+#  zone_id = data.terraform_remote_state.prod.outputs.ecs_cluster_id_default.aws_route53_zone.zone.zone_id
+#  # zone_id = aws_route53_zone.route53_zone.zone_id
+#  count = local.workspace == "prod" ? 1 : 0
+#  name    = var.site_domain
+#  type    = "A"
+#
+#  alias {
+#    name                   = var.load_balancer_name
+#    zone_id                = var.load_balancer_zone_id
+#    evaluate_target_health = true
+#  }
+#}
+#
+#resource "aws_route53_record" "workspace_record" {
+#  zone_id = data.aws_route53_zone.zone.zone_id
+#  name    = "${local.workspace}.${var.site_domain}"
+#  type    = "A"
+#  count = local.workspace == "prod" ? 0 : 1
+#
+#  alias {
+#    name                   = var.load_balancer_name
+#    zone_id                = var.load_balancer_zone_id
+#    evaluate_target_health = true
+#  }
+#}
+#
+#resource "aws_route53_record" "api_record" {
+#  zone_id = data.aws_route53_zone.zone.zone_id
+#  name    = "api.${var.site_domain}"
+#  type    = "A"
+#  count = local.workspace == "prod" ? 1 : 0
+#
+#  alias {
+#    name                   = var.load_balancer_name
+#    zone_id                = var.load_balancer_zone_id
+#    evaluate_target_health = true
+#  }
+#}
+#
+#resource "aws_route53_record" "api_workspace_record" {
+#  zone_id = data.aws_route53_zone.zone.zone_id
+#  name    = "api-${local.workspace}.${var.site_domain}"
+#  type    = "A"
+#  count = local.workspace == "prod" ? 0 : 1
+#
+#  alias {
+#    name                   = var.load_balancer_name
+#    zone_id                = var.load_balancer_zone_id
+#    evaluate_target_health = true
+#  }
+#}
+#
+#resource "aws_route53_record" "www_record" {
+#  zone_id = data.aws_route53_zone.zone.zone_id
+#  name    = "www"
+#  type    = "CNAME"
+#  ttl     = "5"
+#  records = [var.site_domain]
+#  count = local.workspace == "prod" ? 1 : 0
+#}
+#
+##_______
+#
+#resource "aws_acm_certificate" "cert" {
+#  domain_name       = var.site_domain
+#  subject_alternative_names = ["*.${var.site_domain}"]
+#  validation_method = "DNS"
+#}
+#
+#resource "aws_route53_record" "example" {
+#  for_each = {
+#  for dvo in aws_acm_certificate.cert.domain_validation_options : dvo.domain_name => {
+#    name    = dvo.resource_record_name
+#    record  = dvo.resource_record_value
+#    type    = dvo.resource_record_type
+#    zone_id = dvo.domain_name == var.site_domain ? data.aws_route53_zone.zone.zone_id : data.aws_route53_zone.zone.zone_id
+#  }
+#  }
+#
+#  allow_overwrite = true
+#  name            = each.value.name
+#  records         = [each.value.record]
+#  ttl             = 60
+#  type            = each.value.type
+#  zone_id         = each.value.zone_id
+#}
+#
+#resource "aws_acm_certificate_validation" "example" {
+#  certificate_arn         = aws_acm_certificate.cert.arn
+#  validation_record_fqdns = [for record in aws_route53_record.example : record.fqdn]
+#}

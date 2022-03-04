@@ -8,6 +8,16 @@ data "terraform_remote_state" "glob" {
   }
 }
 
+data "terraform_remote_state" "prod" {
+  backend = "s3"
+  config = {
+    bucket = "sbf-aws-terraform-state-backend"
+    key    = "eu-central-1/prod/terraform.tfstate"
+    region = "eu-central-1"
+  }
+}
+
+
 resource "aws_cloudwatch_log_group" "frontend" {
   name              = "frontend"
   retention_in_days = 1
@@ -19,6 +29,9 @@ resource "aws_cloudwatch_log_group" "frontend" {
 #
 #}
 
+
+
+
 ###########################################
 # New task definition
 ###########################################
@@ -27,12 +40,17 @@ resource "aws_ecs_task_definition" "frontend" {
   container_definitions = jsonencode([
     {
       name      = "frontend" //your na
-      image     = "323957640402.dkr.ecr.eu-central-1.amazonaws.com/frontend:${var.container_image_tag}"
+      image     = "323957640402.dkr.ecr.eu-central-1.amazonaws.com/frontend:latest"
       essential = true
       cpu       = 0
 
       logConfiguration = {
-        logDriver = "awslogs"
+        logDriver = "awslogs",
+        options = {
+          awslogs-group = aws_cloudwatch_log_group.frontend.name
+          awslogs-region = "eu-central-1"
+        }
+
       }
 
       portMappings = [
@@ -43,7 +61,12 @@ resource "aws_ecs_task_definition" "frontend" {
         }
       ]
 
-      environment = []
+#      environment: [
+#        {
+#          "name": "REACT_APP_BACKEND_HOSTNAME",
+#          "value": "https://${backend_hostname}"
+#        }
+#      ],
 
       secrets = []
     }
@@ -86,7 +109,7 @@ resource "aws_ecs_task_definition" "frontend" {
 
 resource "aws_ecs_service" "frontend" {
   name            = "frontend"
-  cluster         = var.cluster_id
+  cluster         = data.terraform_remote_state.prod.outputs.ecs_cluster_id_default
   task_definition = aws_ecs_task_definition.frontend.arn
 
   desired_count = 1
@@ -99,4 +122,8 @@ resource "aws_ecs_service" "frontend" {
 #    container_name   = "hello_world"
 #    container_port   = 80
 #  }
+}
+
+output "test" {
+  value = data.terraform_remote_state.prod.outputs.ecs_cluster_id_default
 }

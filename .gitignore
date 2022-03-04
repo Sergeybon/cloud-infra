@@ -31,3 +31,6 @@ override.tf.json
 .idea
 111.md
 .DS_Store
+
+*/.terraform*
+*/.terraform/
