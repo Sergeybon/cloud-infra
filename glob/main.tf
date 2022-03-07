@@ -17,15 +17,15 @@ data "terraform_remote_state" "prod" {
   }
 }
 
-#
-#data "terraform_remote_state" "terraform-backend" {
-#  backend = "s3"
-#  config = {
-#    bucket = "sbf-aws-terraform-state-backend"
-#    key    = "terraform-backend.tfstate"
-#    region = "eu-central-1"
-#  }
-#}
+
+data "terraform_remote_state" "host" {
+  backend = "s3"
+  config = {
+    bucket = "sbf-aws-terraform-state-backend"
+    key    = "hosted-zone/terraform.tfstate"
+    region = "eu-central-1"
+  }
+}
 
 ################################################################################
 # VPC Module
@@ -45,8 +45,6 @@ module "vpc" {
   tags = local.tags
   enable_dns_hostnames = true
   enable_dns_support = true
-
-
 }
 
 
@@ -77,33 +75,32 @@ resource "aws_lb_listener" "HTTP" {
     }
   }
 }
-#
-#
-#resource "aws_lb_listener" "HTTPS" {
-#  load_balancer_arn = aws_lb.this.arn
-#  port              = "443"
-#  protocol          = "HTTPS"
-#  ssl_policy        = "ELBSecurityPolicy-2016-08"
-#  certificate_arn   = aws_acm_certificate_validation.this.certificate_arn
-#  default_action {
-#    type             = "forward"
-#    target_group_arn = aws_lb_target_group.myec2.arn
-#  }
-#  depends_on = [aws_acm_certificate_validation.this]
-#}
+
+
+resource "aws_lb_listener" "HTTPS" {
+  load_balancer_arn = aws_lb.this.arn
+  port              = "443"
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-2016-08"
+  certificate_arn   = aws_acm_certificate_validation.this.certificate_arn
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.front.arn
+  }
+  depends_on = [aws_acm_certificate_validation.this]
+}
 
 
 
 resource "aws_lb_target_group" "back" {
   name = "backend-target-group"
-  #target_type = "ip"
+  target_type = "ip"
   protocol = "HTTP"
-  port = var.backend_port
+  port = 3000
   vpc_id      = module.vpc.vpc_id
-
 }
 
-resource "aws_lb_listener" "back_listener" {
+resource "aws_lb_listener" "back" {
   load_balancer_arn = aws_lb.this.arn
   port = 3000
 
@@ -115,29 +112,61 @@ resource "aws_lb_listener" "back_listener" {
 
 resource "aws_lb_target_group" "front" {
   name        = "frontend-target-group"
-  #target_type = "ip"
+  target_type = "ip"
   protocol    = "HTTP"
-  port = var.frontend_port
+  port = 8080
   vpc_id      = module.vpc.vpc_id
 }
 
-#
-#resource "aws_lb_listener" "front_listener" {
-#  load_balancer_arn = aws_lb.this.arn
-#  port = 443
-#  protocol = "HTTPS"
-#  certificate_arn = var.cert_arn
-#
-#  default_action {
-#    target_group_arn = aws_lb_target_group.front.arn
-#    type = "forward"
-#  }
-#}
+resource "aws_lb_listener" "front" {
+  load_balancer_arn =  aws_lb.this.arn
+  port = 443
+  protocol = "HTTPS"
+  certificate_arn = aws_acm_certificate_validation.this.certificate_arn
 
+  default_action {
+    target_group_arn = aws_lb_target_group.front.arn
+    type = "forward"
+  }
+}
 
+resource "aws_lb_listener_rule" "static" {
+  listener_arn = aws_lb_listener.front.arn
+  priority     = 100
 
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.back.arn
+  }
 
+  condition {
+    path_pattern {
+      values = ["/docs/"]
+    }
+  }
 
+  condition {
+    host_header {
+      values = ["sbondar055.ga"]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "back" {
+  listener_arn = aws_lb_listener.front.arn
+  priority     = 101
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.back.arn
+  }
+
+  condition {
+    host_header {
+      values = ["back.sbondar055.ga"]
+    }
+  }
+}
 
 #resource "aws_lb_target_group_attachment" "targetgroup" {
 #  target_group_arn = aws_lb_target_group.this.arn
@@ -390,95 +419,61 @@ resource "aws_security_group" "allow_ecs_sg" {
 # route53
 ########################
 #
-#resource "aws_route53_record" "a_record" {
-#  zone_id = data.terraform_remote_state.prod.outputs.ecs_cluster_id_default.aws_route53_zone.zone.zone_id
-#  # zone_id = aws_route53_zone.route53_zone.zone_id
-#  count = local.workspace == "prod" ? 1 : 0
-#  name    = var.site_domain
-#  type    = "A"
-#
-#  alias {
-#    name                   = var.load_balancer_name
-#    zone_id                = var.load_balancer_zone_id
-#    evaluate_target_health = true
-#  }
-#}
-#
-#resource "aws_route53_record" "workspace_record" {
-#  zone_id = data.aws_route53_zone.zone.zone_id
-#  name    = "${local.workspace}.${var.site_domain}"
-#  type    = "A"
-#  count = local.workspace == "prod" ? 0 : 1
-#
-#  alias {
-#    name                   = var.load_balancer_name
-#    zone_id                = var.load_balancer_zone_id
-#    evaluate_target_health = true
-#  }
-#}
-#
-#resource "aws_route53_record" "api_record" {
-#  zone_id = data.aws_route53_zone.zone.zone_id
-#  name    = "api.${var.site_domain}"
-#  type    = "A"
-#  count = local.workspace == "prod" ? 1 : 0
-#
-#  alias {
-#    name                   = var.load_balancer_name
-#    zone_id                = var.load_balancer_zone_id
-#    evaluate_target_health = true
-#  }
-#}
-#
-#resource "aws_route53_record" "api_workspace_record" {
-#  zone_id = data.aws_route53_zone.zone.zone_id
-#  name    = "api-${local.workspace}.${var.site_domain}"
-#  type    = "A"
-#  count = local.workspace == "prod" ? 0 : 1
-#
-#  alias {
-#    name                   = var.load_balancer_name
-#    zone_id                = var.load_balancer_zone_id
-#    evaluate_target_health = true
-#  }
-#}
-#
-#resource "aws_route53_record" "www_record" {
-#  zone_id = data.aws_route53_zone.zone.zone_id
-#  name    = "www"
-#  type    = "CNAME"
-#  ttl     = "5"
-#  records = [var.site_domain]
-#  count = local.workspace == "prod" ? 1 : 0
-#}
-#
-##_______
-#
-#resource "aws_acm_certificate" "cert" {
-#  domain_name       = var.site_domain
-#  subject_alternative_names = ["*.${var.site_domain}"]
-#  validation_method = "DNS"
-#}
-#
-#resource "aws_route53_record" "example" {
-#  for_each = {
-#  for dvo in aws_acm_certificate.cert.domain_validation_options : dvo.domain_name => {
-#    name    = dvo.resource_record_name
-#    record  = dvo.resource_record_value
-#    type    = dvo.resource_record_type
-#    zone_id = dvo.domain_name == var.site_domain ? data.aws_route53_zone.zone.zone_id : data.aws_route53_zone.zone.zone_id
-#  }
-#  }
-#
-#  allow_overwrite = true
-#  name            = each.value.name
-#  records         = [each.value.record]
-#  ttl             = 60
-#  type            = each.value.type
-#  zone_id         = each.value.zone_id
-#}
-#
-#resource "aws_acm_certificate_validation" "example" {
-#  certificate_arn         = aws_acm_certificate.cert.arn
-#  validation_record_fqdns = [for record in aws_route53_record.example : record.fqdn]
-#}
+resource "aws_route53_record" "this" {
+  zone_id = data.terraform_remote_state.host.outputs.zone_id_route53
+  name    = "sbondar055.ga"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.this.dns_name
+    zone_id                = aws_lb.this.zone_id
+    evaluate_target_health = true
+  }
+}
+
+resource "aws_route53_record" "back_record" {
+  zone_id = data.terraform_remote_state.host.outputs.zone_id_route53
+  name    = "back.sbondar055.ga"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.this.dns_name
+    zone_id                = aws_lb.this.zone_id
+    evaluate_target_health = true
+  }
+}
+
+########################
+# certificate
+########################
+
+# requests the certificate from Certificate Manager aws_acm_certificate
+resource "aws_acm_certificate" "this" {
+  domain_name       = "sbondar055.ga"
+  subject_alternative_names = ["*.sbondar055.ga"]
+  validation_method = "DNS"
+}
+
+resource "aws_route53_record" "this_dns_validation" {
+  for_each = {
+  for dvo in aws_acm_certificate.this.domain_validation_options : dvo.domain_name => {
+    name    = dvo.resource_record_name
+    record  = dvo.resource_record_value
+    type    = dvo.resource_record_type
+    zone_id = dvo.domain_name == "sbondar055.ga" ? data.terraform_remote_state.host.outputs.zone_id_route53 : data.terraform_remote_state.host.outputs.zone_id_route53
+  }
+  }
+
+  allow_overwrite = true
+  name            = each.value.name
+  records         = [each.value.record]
+  ttl             = 60
+  type            = each.value.type
+  zone_id         = each.value.zone_id
+}
+
+resource "aws_acm_certificate_validation" "this" {
+  certificate_arn         = aws_acm_certificate.this.arn
+  validation_record_fqdns = [for record in aws_route53_record.this_dns_validation : record.fqdn]
+  depends_on = [aws_route53_record.this_dns_validation]
+}
